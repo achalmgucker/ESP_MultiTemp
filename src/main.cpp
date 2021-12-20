@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include "network.h"
+#include "mqttcomm.h"
+#include "display.h"
 
 // Include the libraries we need
 #include <OneWire.h>
@@ -12,7 +14,7 @@
 
 #include "temps.h"
 
-#define SCREEN_WIDTH 128 // OLED display width, in pi xels
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
 
 // Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
@@ -51,7 +53,15 @@ void activatePorts(unsigned int mask, bool state);
 
 MCP23009IoAbstraction *expand;
 
+// Declare all tasks for this project.
 Network myNet;
+MqttComm myMqtt(&myNet);
+Display myDisplay;
+
+Worker *tasks[] = {
+  &myNet, &myMqtt, &myDisplay
+ };
+ int tasksCnt = 3;
 
 void setup(void)
 {
@@ -59,7 +69,8 @@ void setup(void)
   Serial.begin(115200);
   Serial.println("Greenhouse WL");
 
-  myNet.Setup();
+  for (int i=0; i<tasksCnt; i++)
+    tasks[i]->Setup();
 
  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
@@ -132,7 +143,7 @@ void setup(void)
   for (int port = 0; port < 6; port++)
   {
     Serial.print("Device ");
-    Serial.print(port, 2);
+    Serial.print(port, 10);
     Serial.print(" address: ");
     if (Temps[port].active)
       printAddress(Temps[port].addr);
@@ -156,6 +167,7 @@ void setup(void)
 
   display.setRotation(1);
 
+  // PubSubClient psc()
 }
 
 // function to print a device address
@@ -167,6 +179,7 @@ void printAddress(DeviceAddress deviceAddress)
     if (deviceAddress[i] < 16) Serial.print("0");
     Serial.print(deviceAddress[i], HEX);
   }
+  Serial.println();
 }
 
 // function to print a device's resolution
@@ -229,9 +242,11 @@ void ShowTemp(int pos, SingleTemp sglTmp)
 }
 
 unsigned long previousTime = millis();
-
 const unsigned long interval = 1000;
 bool state = false;
+
+unsigned long pubTimeLast = previousTime;
+const unsigned long pubTimeIntv = 120000;
 
 void activatePorts(unsigned int mask, bool state)
 {
@@ -250,12 +265,17 @@ void activatePorts(unsigned int mask, bool state)
 */
 void loop(void)
 {
-  myNet.Loop();
+  for (int i=0; i<tasksCnt; i++)
+    tasks[i]->Loop();
 
-  unsigned long diff = millis() - previousTime;
+  // current number of milliseconds.
+  unsigned long mill = millis();
+  unsigned long diff = mill - previousTime;
   if(diff > interval) {
-    previousTime += diff;
+    previousTime += interval;
     state = !state;
+    // Serial.print("Zeit: ");
+    // Serial.println(myNet.GetTime());
   }
 
   // call sensors.requestTemperatures() to issue a global temperature
@@ -279,5 +299,28 @@ void loop(void)
   for (int port = 0; port < 6; port++)
   {
     ShowTemp(port, Temps[port]);
+  }
+
+  unsigned long pubTimeDiff = mill - pubTimeLast;
+  if (pubTimeDiff > pubTimeIntv)
+  {
+    pubTimeLast += pubTimeIntv;
+    String t = "{ \"Time\": ";
+    t.concat(myNet.GetTime());
+    t.concat(", \"TEMPS\": [ ");
+    for (int i=0; i<6; i++)
+    {
+      if (Temps[i].active)
+      {
+        if (i>0) t.concat(", ");
+        t.concat("{ \"Port\": ");
+        t.concat(i);
+        t.concat(", \"Temp\": ");
+        t.concat(Temps[i].temp);
+        t.concat("}");
+      }
+    }
+    t.concat(" ] }");
+    myMqtt.PublishData(t);
   }
 }

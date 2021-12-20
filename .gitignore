@@ -4,5 +4,6 @@
 .vscode/launch.json
 .vscode/ipch
 
+include/mqtt_defines.h
 include/wlan_defines.h
 extra_params.ini

@@ -7,6 +7,9 @@
 
 const unsigned long CONNECT_TEST_MIN_TIME_MS = 1000;
 
+WiFiUDP ntpUDP;
+NTPClient timeClt(ntpUDP);
+
 Network::Network()
     : _state(NetworkState::PREINIT),
       _prevTime(0),
@@ -34,9 +37,13 @@ IPAddress Network::GetIpAddr()
     return _connected ? _currIpAddr : INADDR_NONE;
 }
 
+unsigned long Network::GetTime()
+{
+    return timeClt.getEpochTime();
+}
 
 /**
- * Initial called setup.
+ * Initially called setup.
  */
 void Network::Setup()
 {
@@ -53,6 +60,7 @@ void Network::Setup()
 #ifdef MYSSID
     WiFi.setHostname(MYSSID);
 #endif
+
 }
 
 /**
@@ -98,6 +106,7 @@ void Network::Loop()
             {
                 if (_wifiMulti.run(8000) == WL_CONNECTED)
                 {
+                    timeClt.begin();
                     _currSsid = WiFi.SSID();
                     _currIpAddr = WiFi.localIP();
                     _connected = true;
@@ -122,10 +131,13 @@ void Network::Loop()
                 _state = NetworkState::DISCONNECTED;
                 _prevTime = currTime;
                 MDNS.end();
+                timeClt.end();
+                Serial.println("Network broken.");
                 break;
             }
             ArduinoOTA.handle();
             MDNS.update();
+            timeClt.update();
             break;
         default:
             break;
